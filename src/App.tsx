@@ -353,7 +353,7 @@ export default function App() {
       messages: [newMsg, ...prev.messages],
     }));
 
-    const cleanPhone = cleanDigits(contact.phone);
+    const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
     const encoded = encodeURIComponent(newMsg.body);
     window.open(`https://wa.me/52${cleanPhone}?text=${encoded}`, '_blank');
     setShowConfirmSendModal(newMsg);

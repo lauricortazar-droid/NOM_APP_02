@@ -2247,16 +2247,16 @@ export default function App() {
             }} className="space-y-3 text-xs">
               <div>
                 <label className="font-bold block text-slate-700 mb-1">Cargo a Liquidar o Abonar</label>
-                <select name="chargeId" className="w-full border p-2 rounded-lg">
-                  {appState.charges.map(ch => (
-                    <option key={ch.id} value={ch.id}>{ch.concept} - ${ch.amount.toLocaleString('es-MX')} MXN</option>
+                <select name="chargeId" required className="w-full border p-3 rounded-lg min-h-11">
+                  {payableCharges.map(ch => (
+                    <option key={ch.id} value={ch.id}>{ch.concept} - Saldo ${chargeAccounting(ch, appState.payments, appState.adjustments).balance.toFixed(2)} MXN</option>
                   ))}
                 </select>
               </div>
 
               <div>
                 <label className="font-bold block text-slate-700 mb-1">Monto del Pago ($ MXN)</label>
-                <input name="amount" type="number" required min="1" step="0.5" defaultValue="3000" className="w-full border p-2 rounded-lg text-base font-bold" />
+                <input name="amount" type="number" required min="0.01" step="0.01" placeholder="0.00" className="w-full border p-3 rounded-lg text-base font-bold" />
               </div>
 
               <div>
@@ -2275,7 +2275,7 @@ export default function App() {
 
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setShowPaymentModal(false)} className="px-3 py-1.5 border rounded-lg">Cancelar</button>
-                <button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-bold">Registrar Pago</button>
+                <button type="submit" disabled={payableCharges.length === 0} className="px-4 py-3 bg-emerald-600 text-white rounded-lg font-bold disabled:opacity-50">Registrar Pago</button>
               </div>
             </form>
           </div>
@@ -2297,11 +2297,21 @@ export default function App() {
               const form = e.target as HTMLFormElement;
               const delta = Number((form.elements.namedItem('delta') as HTMLInputElement).value);
               const reason = (form.elements.namedItem('reason') as HTMLInputElement).value;
-              handleRegisterAdjustment('pay2', delta, reason);
+              const paymentId = (form.elements.namedItem('paymentId') as HTMLSelectElement).value;
+              handleRegisterAdjustment(paymentId, delta, reason);
             }} className="space-y-3 text-xs">
               <div>
+                <label className="font-bold block text-slate-700 mb-1">Pago original de esta sede</label>
+                <select name="paymentId" required className="w-full border p-3 rounded-lg min-h-11">
+                  {centerPayments.map(pay => (
+                    <option key={pay.id} value={pay.id}>{pay.receiptFolio} — ${pay.amount.toFixed(2)} MXN — {pay.paidAt}</option>
+                  ))}
+                </select>
+                {centerPayments.length === 0 && <p className="text-amber-700 mt-1">No hay pagos disponibles en esta sede.</p>}
+              </div>
+              <div>
                 <label className="font-bold block text-slate-700 mb-1">Monto Delta ($ MXN, ej. -500)</label>
-                <input name="delta" type="number" required defaultValue="-500" className="w-full border p-2 rounded-lg font-mono font-bold" />
+                <input name="delta" type="number" required step="0.01" placeholder="Ej. -500.00" className="w-full border p-3 rounded-lg font-mono font-bold" />
               </div>
               <div>
                 <label className="font-bold block text-slate-700 mb-1">Motivo Justificado del Ajuste</label>
@@ -2309,7 +2319,7 @@ export default function App() {
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setShowAdjustmentModal(false)} className="px-3 py-1.5 border rounded-lg">Cancelar</button>
-                <button type="submit" className="px-4 py-1.5 bg-[#0E2A47] text-white rounded-lg font-bold">Aplicar Ajuste</button>
+                <button type="submit" disabled={centerPayments.length === 0} className="px-4 py-3 bg-[#0E2A47] text-white rounded-lg font-bold disabled:opacity-50">Aplicar Ajuste</button>
               </div>
             </form>
           </div>

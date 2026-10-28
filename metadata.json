@@ -1,0 +1,6 @@
+{
+  "name": "Guerreros de la Luz A.C. - Sistema de Gestión Integral",
+  "description": "Plataforma de gestión integral para centros de rehabilitación y adicciones con aislamiento multi-sede, disociación clínica, reglas R1-R11 y auditoría.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

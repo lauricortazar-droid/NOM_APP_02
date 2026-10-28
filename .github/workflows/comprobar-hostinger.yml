@@ -3,6 +3,7 @@ name: Comprobar demo para Hostinger
 on:
   push:
     branches:
+      - main
       - mejora-integridad-finanzas-permisos-20261028
   pull_request:
     branches:

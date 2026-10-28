@@ -15,10 +15,12 @@
    - Build command: **npm run build**
    - Output directory: **dist**
    - Install: **npm install** (si el asistente solicita comando)
-   - Entry file: **no aplica** para una web estática.
+   - Entry file: **server.js** (compatibilidad con configuración Express)
+   - Start command: **npm start** (si Hostinger lo solicita)
+   - Si usas el modo Vite estático, la salida sigue siendo `dist` y puede omitir el archivo de entrada.
 6. Elegir preferiblemente un **dominio temporal o subdominio de pruebas** y no el sitio público definitivo.
 7. No cargar variables \`GEMINI_API_KEY\`, ni \`SUPABASE_SERVICE_ROLE_KEY\`, ni ningún secreto de servidor en el frontend. Este prototipo no necesita credenciales Supabase para la demo ficticia.
-8. Confirmar Deploy y verificar en hPanel el estado **Completed / Completado** y el enlace de la web.
+8. Confirmar Deploy o Redeploy y verificar en hPanel el estado **Completed / Completado** y el enlace de la web.
 9. Probar en móvil (360 px): navegación, cambio de sede, roles, registro de pago ficticio, ajuste ficticio, acceso a documentos y mensajes, reinicio de datos semilla.
 10. El sitio tiene que mostrar el aviso de demo y NO debe indexarse en buscadores.
 
@@ -35,3 +37,14 @@ La integración GitHub de Hostinger puede desplegar los cambios de la rama elegi
 ## Antes de una puesta en producción
 
 Completar autenticación real y MFA, permisos verificados por servidor, RLS por centro en PostgreSQL, respaldos, almacenamiento privado cifrado, auditoría de solo anexado y revisión legal/clínica. No usar datos sensibles ni operaciones reales mientras no se completen.
+
+## Solución al error «Entry file not found» (Hostinger detecta Express)
+
+El proyecto compila con Vite, pero Hostinger puede autoseleccionar «Express». Para que el modo Express también funcione se agregó `server.js` (y alias `index.js`), que sirve los recursos compilados desde `dist/` y escucha el puerto `PORT` provisto por el alojamiento. El comando de inicio es `npm start`.
+
+En hPanel → Sitios web → Panel → Despliegues → **Ajustes y volver a desplegar**:
+- Rama: `mejora-integridad-finanzas-permisos-20261028` (o `main` una vez fusionados los cambios).
+- Framework: Express cuando pida archivo de entrada; **entrada `server.js`**; compilación `npm run build`.
+- Root `./`; Node 22; eliminar variables Supabase de ejemplo (`C`, `X`), que no son necesarias para esta demo ficticia.
+
+En modo Vite estático, elegir framework Vite, carpeta `dist`, sin archivo de entrada. Si un despliegue falla, la aplicación no se publica; revisar logs y volver a desplegar.

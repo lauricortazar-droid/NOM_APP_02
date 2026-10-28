@@ -1,0 +1,39 @@
+name: Comprobar demo para Hostinger
+
+on:
+  push:
+    branches:
+      - mejora-integridad-finanzas-permisos-20261028
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Instalar dependencias
+        run: npm install --no-audit --no-fund
+      - name: Probar reglas de negocio
+        run: npm test
+      - name: Revisar TypeScript
+        run: npm run lint
+      - name: Compilar versión estática
+        run: npm run build
+      - name: Comprobar salida de Vite
+        run: test -f dist/index.html
+      - name: Guardar compilación para revisión
+        uses: actions/upload-artifact@v4
+        with:
+          name: centrovida-demo-dist
+          path: dist/
+          retention-days: 7

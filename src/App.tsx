@@ -31,6 +31,7 @@ import AlertsPanel, { calculateOverdueInfo } from './components/AlertsPanel';
 import ExecutiveSummaryModal from './components/ExecutiveSummaryModal';
 import PaymentReceiptModal from './components/PaymentReceiptModal';
 import CenterConsolidatedReportModal from './components/CenterConsolidatedReportModal';
+import { belongsToCenter, chargeAccounting, validatePayment, validateAdjustment, validatePaymentReminder } from './services/financialRules';
 
 // ==========================================
 // ICONOS SVG ACCESIBLES SIN DEPENDENCIAS
@@ -119,7 +120,7 @@ export default function App() {
     contactName: '',
     contactPhone: '',
     contactRelationship: 'Madre',
-    contactAllowsReminders: true,
+    contactAllowsReminders: false,
   });
 
   const [showDischargeModal, setShowDischargeModal] = useState(false);
@@ -151,12 +152,14 @@ export default function App() {
       name: `${currentRole} - Operador Activo`,
       email: `${currentRole.toLowerCase()}@guerreros.org`,
       role: currentRole,
-      active: true,
-      mfaEnabled: true,
+      active: false,
+      mfaEnabled: false,
     };
   }, [currentRole, currentCenterId, appState.users]);
 
   const activeCenter = appState.centers.find(c => c.id === currentCenterId) || appState.centers[0];
+  const payableCharges = appState.charges.filter(ch => belongsToCenter(appState, ch.id, currentCenterId) && chargeAccounting(ch, appState.payments, appState.adjustments).balance > 0);
+  const centerPayments = appState.payments.filter(p => belongsToCenter(appState, p.chargeId, currentCenterId));
 
   // Helper de Notificaciones
   const showToast = (message: string, type: 'success' | 'warn' | 'error' = 'success') => {
@@ -284,71 +287,52 @@ export default function App() {
     showToast(`Nuevo episodio de atención creado para ${activePerson.fullName}. Historial conservado íntegramente.`);
   };
 
-  // R6: Registro de Pago Inmutable
+
+  // R6: Validar sede e importe antes de guardar el movimiento.
   const handleRegisterPayment = (chargeId: string, amount: number, method: 'Efectivo' | 'Transferencia' | 'Tarjeta', notes: string) => {
+    const check = validatePayment(appState, currentUser, currentCenterId, chargeId, amount);
+    if (!check.ok) { showToast(check.error, 'error'); return; }
     const newPayment: Payment = {
-      id: `pay-${Date.now()}`,
-      chargeId,
-      amount,
-      paidAt: new Date().toISOString().split('T')[0],
-      method,
-      receiptFolio: `REC-${Math.floor(100 + Math.random() * 900)}`,
-      registeredBy: currentUser.name,
-      notes,
+      id: 'pay-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+      chargeId, amount, paidAt: new Date().toISOString().split('T')[0], method,
+      receiptFolio: 'REC-' + Date.now(), registeredBy: currentUser.name, notes,
     };
-
-    setAppState(prev => ({
-      ...prev,
-      payments: [...prev.payments, newPayment],
-      charges: prev.charges.map(c => {
-        if (c.id === chargeId) {
-          const prevPaid = prev.payments.filter(p => p.chargeId === chargeId).reduce((a, b) => a + b.amount, 0);
-          const isFullyPaid = (prevPaid + amount) >= c.amount;
-          return {
-            ...c,
-            status: isFullyPaid ? 'pagado' : 'parcial',
-          };
-        }
-        return c;
-      })
-    }));
-
-    logAudit('PAGO_REGISTRADO', 'payments', `Pago registrado por $${amount.toLocaleString('es-MX')} MXN (${method}) bajo folio ${newPayment.receiptFolio}`);
-    showToast(`Pago registrado con éxito. Folio de recibo: ${newPayment.receiptFolio}`);
+    setAppState(prev => {
+      const payments = [...prev.payments, newPayment];
+      return { ...prev, payments, charges: prev.charges.map(ch => ch.id === chargeId
+        ? { ...ch, status: chargeAccounting(ch, payments, prev.adjustments).status } : ch) };
+    });
+    logAudit('PAGO_REGISTRADO', 'payments', 'Pago de $' + amount.toFixed(2) + ' MXN (' + method + ') en ' + currentCenterId + ', folio ' + newPayment.receiptFolio);
+    showToast('Pago registrado. Folio ' + newPayment.receiptFolio);
     setShowPaymentModal(false);
   };
 
-  // R6: Corrección mediante Ajuste Contable Inmutable
+
+  // R6: Ajustar el pago seleccionado sin modificar el original.
   const handleRegisterAdjustment = (paymentId: string, delta: number, reason: string) => {
+    const check = validateAdjustment(appState, currentUser, currentCenterId, paymentId, delta, reason);
+    if (!check.ok) { showToast(check.error, 'error'); return; }
+    const payment = appState.payments.find(p => p.id === paymentId)!;
     const adj: PaymentAdjustment = {
-      id: `adj-${Date.now()}`,
-      paymentId,
-      amountDelta: delta,
-      reason,
-      registeredBy: currentUser.name,
-      createdAt: new Date().toISOString(),
+      id: 'adj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+      paymentId, amountDelta: delta, reason: reason.trim(),
+      registeredBy: currentUser.name, createdAt: new Date().toISOString(),
     };
-
-    setAppState(prev => ({
-      ...prev,
-      adjustments: [...prev.adjustments, adj],
-    }));
-
-    logAudit('AJUSTE_FINANCIERO', 'payment_adjustments', `Ajuste contable de $${delta} MXN aplicado al pago ${paymentId}. Motivo: ${reason}`);
-    showToast('Ajuste contable aplicado con trazabilidad auditora.');
+    setAppState(prev => {
+      const adjustments = [...prev.adjustments, adj];
+      return { ...prev, adjustments, charges: prev.charges.map(ch => ch.id === payment.chargeId
+        ? { ...ch, status: chargeAccounting(ch, prev.payments, adjustments).status } : ch) };
+    });
+    logAudit('AJUSTE_FINANCIERO', 'payment_adjustments', 'Ajuste de $' + delta.toFixed(2) + ' MXN al pago ' + paymentId + '. Motivo: ' + reason.trim());
+    showToast('Ajuste registrado con trazabilidad.');
     setShowAdjustmentModal(false);
   };
 
   // R9 & R11: Mensajería Asistida de WhatsApp
   const handlePrepareMessage = (contact: Contact) => {
-    if (!contact.allowsReminders) {
-      showToast(`Acción denegada (R9): El contacto "${contact.name}" no ha autorizado recordatorios de pago.`, 'error');
-      return;
-    }
-    if (contact.contactRestricted) {
-      showToast(`Acción denegada: El contacto cuenta con una restricción activa de contacto.`, 'error');
-      return;
-    }
+    const person = appState.persons.find(p => p.id === contact.personId);
+    const check = validatePaymentReminder(contact, person, currentUser, currentCenterId);
+    if (!check.ok) { showToast(check.error, 'error'); return; }
 
     const newMsg: MessageRecord = {
       id: `msg-${Date.now()}`,
@@ -377,6 +361,14 @@ export default function App() {
 
   // R11: Confirmación humana de mensaje enviado
   const handleConfirmSent = (msg: MessageRecord) => {
+    const recorded = appState.messages.find(m => m.id === msg.id && m.centerId === currentCenterId && m.status === 'preparado');
+    const contact = appState.contacts.find(c => c.id === msg.contactId);
+    const person = appState.persons.find(p => p.id === msg.personId);
+    if (!recorded || !contact || recorded.contactId !== contact.id) {
+      showToast('No existe un mensaje pendiente válido en esta sede.', 'error'); return;
+    }
+    const check = validatePaymentReminder(contact, person, currentUser, currentCenterId);
+    if (!check.ok) { showToast(check.error, 'error'); return; }
     setAppState(prev => ({
       ...prev,
       messages: prev.messages.map(m => {
@@ -445,7 +437,7 @@ export default function App() {
       <div className="bg-slate-900 text-slate-300 text-[11px] px-4 py-1.5 flex flex-wrap justify-between items-center border-b border-slate-700">
         <span className="flex items-center gap-1.5">
           <strong className="text-white">GUERREROS DE LA LUZ A.C. &middot; CENTROVIDA</strong>
-          <span className="text-slate-400 hidden sm:inline">&mdash; Prototipo Operativo MVP con Datos Ficticios (Reglas R1 a R11)</span>
+          <span className="text-slate-400 hidden sm:inline">&mdash; Demostración local ficticia. No cargar datos personales ni clínicos.</span>
         </span>
         <div className="flex items-center gap-3">
           <span className="text-slate-400 hidden md:inline">Disociación Clínica &middot; Egreso Libre &middot; Trazabilidad Append-Only</span>
@@ -488,6 +480,10 @@ export default function App() {
                 value={currentCenterId} 
                 onChange={(e) => {
                   setCurrentCenterId(e.target.value);
+                  setCurrentRole('Direccion');
+                  setCurrentTab('inicio');
+                  setSelectedPersonId(null);
+                  setSearchQuery('');
                   logAudit('CAMBIO_SEDE', 'centers', `Operador cambió contexto a sede ${e.target.value}`);
                   showToast(`Contexto cambiado a: ${appState.centers.find(c => c.id === e.target.value)?.name}`);
                 }}
@@ -513,13 +509,13 @@ export default function App() {
                 }}
                 className="bg-[#0E2A47] text-amber-300 font-bold rounded px-2 py-1 outline-none border border-slate-600 focus:border-[#D49E24]"
               >
-                <option value="Direccion">Dirección General</option>
-                <option value="Administracion">Administración & Finanzas</option>
-                <option value="Psicologia">Psicología Clínica</option>
-                <option value="Consejeria">Consejería en Adicciones</option>
-                <option value="Enfermeria">Enfermería / Médica</option>
-                <option value="TrabajoSocial">Trabajo Social</option>
-                <option value="Operativo">Personal Operativo</option>
+                <option value="Direccion" disabled={!appState.users.some(u => u.role === "Direccion" && u.centerId === currentCenterId && u.active)}>Dirección General</option>
+                <option value="Administracion" disabled={!appState.users.some(u => u.role === "Administracion" && u.centerId === currentCenterId && u.active)}>Administración & Finanzas</option>
+                <option value="Psicologia" disabled={!appState.users.some(u => u.role === "Psicologia" && u.centerId === currentCenterId && u.active)}>Psicología Clínica</option>
+                <option value="Consejeria" disabled={!appState.users.some(u => u.role === "Consejeria" && u.centerId === currentCenterId && u.active)}>Consejería en Adicciones</option>
+                <option value="Enfermeria" disabled={!appState.users.some(u => u.role === "Enfermeria" && u.centerId === currentCenterId && u.active)}>Enfermería / Médica</option>
+                <option value="TrabajoSocial" disabled={!appState.users.some(u => u.role === "TrabajoSocial" && u.centerId === currentCenterId && u.active)}>Trabajo Social</option>
+                <option value="Operativo" disabled={!appState.users.some(u => u.role === "Operativo" && u.centerId === currentCenterId && u.active)}>Personal Operativo</option>
               </select>
             </div>
           </div>
@@ -1707,8 +1703,8 @@ export default function App() {
 
                   <button 
                     onClick={() => {
-                      if (!activePerson) {
-                        showToast('Selecciona primero una persona en atención.', 'warn');
+                      if (!activePerson || !personEpisode) {
+                        showToast('Selecciona una persona con episodio de esta sede.', 'warn');
                         return;
                       }
                       const filled = tmpl.body
@@ -1722,7 +1718,7 @@ export default function App() {
 
                       const newDoc: DocumentRecord = {
                         id: `doc-${Date.now()}`,
-                        episodeId: personEpisode ? personEpisode.id : 'ep1',
+                        episodeId: personEpisode.id,
                         templateId: tmpl.id,
                         title: `${tmpl.name} - ${activePerson.fullName}`,
                         content: filled,
@@ -1747,7 +1743,7 @@ export default function App() {
             <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-3">
               <h3 className="font-bold text-slate-900 text-sm">Documentos Firmados y Custodiados</h3>
               <div className="space-y-2 text-xs">
-                {appState.documents.map(doc => (
+                {appState.documents.filter(doc => appState.episodes.some(ep => ep.id === doc.episodeId && ep.centerId === currentCenterId)).map(doc => (
                   <div key={doc.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-wrap justify-between items-center gap-3">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
@@ -2251,16 +2247,16 @@ export default function App() {
             }} className="space-y-3 text-xs">
               <div>
                 <label className="font-bold block text-slate-700 mb-1">Cargo a Liquidar o Abonar</label>
-                <select name="chargeId" className="w-full border p-2 rounded-lg">
-                  {appState.charges.map(ch => (
-                    <option key={ch.id} value={ch.id}>{ch.concept} - ${ch.amount.toLocaleString('es-MX')} MXN</option>
+                <select name="chargeId" required className="w-full border p-3 rounded-lg min-h-11">
+                  {payableCharges.map(ch => (
+                    <option key={ch.id} value={ch.id}>{ch.concept} - Saldo ${chargeAccounting(ch, appState.payments, appState.adjustments).balance.toFixed(2)} MXN</option>
                   ))}
                 </select>
               </div>
 
               <div>
                 <label className="font-bold block text-slate-700 mb-1">Monto del Pago ($ MXN)</label>
-                <input name="amount" type="number" required min="1" step="0.5" defaultValue="3000" className="w-full border p-2 rounded-lg text-base font-bold" />
+                <input name="amount" type="number" required min="0.01" step="0.01" placeholder="0.00" className="w-full border p-3 rounded-lg text-base font-bold" />
               </div>
 
               <div>
@@ -2279,7 +2275,7 @@ export default function App() {
 
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setShowPaymentModal(false)} className="px-3 py-1.5 border rounded-lg">Cancelar</button>
-                <button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-bold">Registrar Pago</button>
+                <button type="submit" disabled={payableCharges.length === 0} className="px-4 py-3 bg-emerald-600 text-white rounded-lg font-bold disabled:opacity-50">Registrar Pago</button>
               </div>
             </form>
           </div>
@@ -2301,11 +2297,21 @@ export default function App() {
               const form = e.target as HTMLFormElement;
               const delta = Number((form.elements.namedItem('delta') as HTMLInputElement).value);
               const reason = (form.elements.namedItem('reason') as HTMLInputElement).value;
-              handleRegisterAdjustment('pay2', delta, reason);
+              const paymentId = (form.elements.namedItem('paymentId') as HTMLSelectElement).value;
+              handleRegisterAdjustment(paymentId, delta, reason);
             }} className="space-y-3 text-xs">
               <div>
+                <label className="font-bold block text-slate-700 mb-1">Pago original de esta sede</label>
+                <select name="paymentId" required className="w-full border p-3 rounded-lg min-h-11">
+                  {centerPayments.map(pay => (
+                    <option key={pay.id} value={pay.id}>{pay.receiptFolio} — ${pay.amount.toFixed(2)} MXN — {pay.paidAt}</option>
+                  ))}
+                </select>
+                {centerPayments.length === 0 && <p className="text-amber-700 mt-1">No hay pagos disponibles en esta sede.</p>}
+              </div>
+              <div>
                 <label className="font-bold block text-slate-700 mb-1">Monto Delta ($ MXN, ej. -500)</label>
-                <input name="delta" type="number" required defaultValue="-500" className="w-full border p-2 rounded-lg font-mono font-bold" />
+                <input name="delta" type="number" required step="0.01" placeholder="Ej. -500.00" className="w-full border p-3 rounded-lg font-mono font-bold" />
               </div>
               <div>
                 <label className="font-bold block text-slate-700 mb-1">Motivo Justificado del Ajuste</label>
@@ -2313,7 +2319,7 @@ export default function App() {
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setShowAdjustmentModal(false)} className="px-3 py-1.5 border rounded-lg">Cancelar</button>
-                <button type="submit" className="px-4 py-1.5 bg-[#0E2A47] text-white rounded-lg font-bold">Aplicar Ajuste</button>
+                <button type="submit" disabled={centerPayments.length === 0} className="px-4 py-3 bg-[#0E2A47] text-white rounded-lg font-bold disabled:opacity-50">Aplicar Ajuste</button>
               </div>
             </form>
           </div>
